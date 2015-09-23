@@ -8,6 +8,13 @@ import android.os.Vibrator;
 import android.support.v4.app.FragmentActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.KeyEvent;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.CompoundButton;
+import android.widget.EditText;
+import android.widget.Switch;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
@@ -21,6 +28,10 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.parse.Parse;
+import com.parse.ParseException;
+import com.parse.ParseUser;
+
 
 public class MapsActivity extends FragmentActivity implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener,
         LocationListener {
@@ -28,22 +39,94 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
     private GoogleApiClient mGoogleApiClient;
     private Marker now;
+    private LatLng currentPoint;
 
 
-    private long UPDATE_INTERVAL = 60000;  /* 60 secs */
+    private long UPDATE_INTERVAL = 30000;  /* 30 secs */
     private long FASTEST_INTERVAL = 5000; /* 5 secs */
+    private double defaultLat = 13.7515989;
+    private double defaultLng = 100.5352369;
+    private Switch sLocation;
+    private EditText etStatus;
+    private String status = "mock up status";
+    private ParseUser user;
+    private boolean locationEnabled = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_maps);
+        setupUser();
         setUpMapIfNeeded();
+        setupView();
+        setupListeners();
 
         mGoogleApiClient = new GoogleApiClient.Builder(this)
                 .addApi(LocationServices.API)
                 .addConnectionCallbacks(this)
                 .addOnConnectionFailedListener(this).build();
 
+    }
+
+    private void setupView() {
+
+        sLocation = (Switch) findViewById(R.id.sLocation);
+        etStatus = (EditText) findViewById(R.id.etStatus);
+        setSwitch(true);
+        etStatus.setText(fetchStatus());
+
+    }
+
+    private void setupListeners() {
+        final MapsActivity app = this;
+        etStatus.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    InputMethodManager imm = (InputMethodManager)v.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                    imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
+                    Toast.makeText(app, "Saving...", Toast.LENGTH_SHORT).show();
+                    String newStatus = etStatus.getText().toString();
+                    setStatus(newStatus);
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        sLocation.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                Toast.makeText(app, "Saving...", Toast.LENGTH_SHORT).show();
+                setSwitch(isChecked);
+            }
+        });
+    }
+
+    private void setStatus(String status){
+        user.put("note", status);
+        try {
+            user.save();
+            Toast.makeText(MapsActivity.this, "Saved!", Toast.LENGTH_SHORT).show();
+            Log.d("setStatus", "saved " + status);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void setSwitch(boolean on){
+        user.put("track", on);
+        try {
+            user.save();
+            if(on){
+                Toast.makeText(MapsActivity.this, "Location tracking turned on", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(MapsActivity.this, "Location tracking turned off", Toast.LENGTH_SHORT).show();
+            }
+            Log.d("setSwitch", "saved");
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -68,6 +151,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
      * method in {@link #onResume()} to guarantee that it will be called.
      */
     private void setUpMapIfNeeded() {
+
         // Do a null check to confirm that we have not already instantiated the map.
         if (mMap == null) {
             // Try to obtain the map from the SupportMapFragment.
@@ -77,7 +161,10 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
             if (mMap != null) {
                 setUpMap();
             }
+        } else {
+            updateMarker();
         }
+
     }
 
     /**
@@ -89,25 +176,31 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     private void setUpMap() {
 //        Location lastLocation = LocationServices.FusedLocationApi.getLastLocation(mGoogleApiClient);
 //        if(lastLocation == null){
-            updateMarker(new LatLng(0,0));
+            updateMarker();
 //        } else {
 //            updateMarker(new LatLng(lastLocation.getLatitude(), lastLocation.getLongitude()));
 //        }
     }
 
-    private void updateMarker(LatLng latLng) {
+    private void updateMarker() {
 
         if(now != null){
             now.remove();
         }
 
-        now = mMap.addMarker(new MarkerOptions().position(latLng).title("Current location"));
+        // If there is no location found
+        if(currentPoint == null) {
+            // Toast.makeText(this, "Please turn on GPS", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        now = mMap.addMarker(new MarkerOptions().position(currentPoint).title("Current location"));
 
         // Showing the current location in Google Map
-        mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+        mMap.moveCamera(CameraUpdateFactory.newLatLng(currentPoint));
 
         // Zoom in the Google Map
-        mMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+        mMap.animateCamera(CameraUpdateFactory.zoomTo(18));
     }
 
 
@@ -127,8 +220,10 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     @Override
     public void onConnected(Bundle bundle) {
         Location mCurrentLocation = LocationServices.FusedLocationApi.getLastLocation(mGoogleApiClient);
-        Log.d("DEBUG", "current location: " + mCurrentLocation.toString());
-        LatLng latLng = new LatLng(mCurrentLocation.getLatitude(), mCurrentLocation.getLongitude());
+        if(mCurrentLocation != null) {
+            Log.d("DEBUG", "current location: " + mCurrentLocation.toString());
+            currentPoint = new LatLng(mCurrentLocation.getLatitude(), mCurrentLocation.getLongitude());
+        }
         startLocationUpdates();
 
 //        LocationRequest locationRequest = LocationRequest.create()
@@ -180,11 +275,36 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
                 Double.toString(location.getLatitude()) + "," +
                 Double.toString(location.getLongitude());
 
-        updateMarker(new LatLng(location.getLatitude(), location.getLongitude()));
-        Log.d("UPDATE", msg);
+        currentPoint = new LatLng(location.getLatitude(), location.getLongitude());
+        updateMarker();
+        Log.d("Updated: ", msg);
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
 
         Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         v.vibrate(300);
     }
+
+
+    public void setupUser() {
+        String session = getIntent().getStringExtra("session");
+        try {
+            user = ParseUser.become(session);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private String fetchStatus() {
+
+        String status = user.getString("note");
+
+        if (status != null) {
+            return status;
+        } else {
+            return "";
+        }
+
+    }
+
 }
