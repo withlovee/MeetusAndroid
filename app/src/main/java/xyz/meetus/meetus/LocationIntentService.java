@@ -9,8 +9,11 @@ import android.os.Vibrator;
 import android.util.Log;
 
 import com.google.android.gms.location.FusedLocationProviderApi;
+import com.parse.GetCallback;
+import com.parse.ParseException;
 import com.parse.ParseGeoPoint;
 import com.parse.ParseObject;
+import com.parse.ParseQuery;
 import com.parse.ParseUser;
 
 /**
@@ -21,36 +24,64 @@ import com.parse.ParseUser;
  */
 public class LocationIntentService extends IntentService {
 
+    private ParseUser user;
+    private ParseObject locationObj;
+
     public LocationIntentService() {
 
         super("LocationIntentService");
         user = ParseUser.getCurrentUser();
 
+        locationObj = user.getParseObject("locationId");
+        try {
+            locationObj.fetch();
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
     }
-    private ParseUser user;
 
     @Override
     protected void onHandleIntent(Intent intent) {
         if (intent != null) {
-            final Location location = intent.getParcelableExtra(FusedLocationProviderApi.KEY_LOCATION_CHANGED);
+            Location location = intent.getParcelableExtra(FusedLocationProviderApi.KEY_LOCATION_CHANGED);
+
             Log.d("LocationIntentService", location.getLatitude() + " " + location.getLongitude());
 
             // send req to server
             sendLocation(location.getLatitude(), location.getLongitude());
 
-            // vibrate
-            Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-            v.vibrate(300);
-
         }
+    }
+
+
+    private void setupUser(String session) {
+        try {
+            user = ParseUser.become(session);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
     }
 
 
     private void sendLocation(Double lat, Double lng){
 
         ParseGeoPoint point = new ParseGeoPoint(lat, lng);
-        user.put("location", point);
-        user.saveInBackground();
+
+        try {
+            locationObj.fetchIfNeeded();
+            locationObj.put("location", point);
+            locationObj.saveInBackground();
+
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
+        ParseObject location = new ParseObject("Log");
+        location.put("userId", user.getObjectId());
+        location.put("location", point);
+        location.saveInBackground();
 
     }
 }

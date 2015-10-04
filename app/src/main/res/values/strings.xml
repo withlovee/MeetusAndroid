@@ -5,7 +5,7 @@
     <string name="logging_in">Logging in using Facebook. Please wait.</string>
     <string name="action_settings">Settings</string>
     <string name="title_activity_maps">Map</string>
-    <string name="facebook_app_id">FBID</string>
-    <string name="parse_app_id">PARSEID</string>
-    <string name="parse_client_key">PARSEKEY</string>
+    <string name="facebook_app_id">191520814513407</string>
+    <string name="parse_app_id">W2g1n5y2IBNEysn7FMcGxMav0elYeMGOsJhdPisN</string>
+    <string name="parse_client_key">PLmvfs5t0rGdVRKxNJc4Fw4365RgCupi0Nkqygwn</string>
 </resources>

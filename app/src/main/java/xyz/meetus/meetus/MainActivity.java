@@ -1,8 +1,6 @@
 package xyz.meetus.meetus;
 
-import android.content.Context;
 import android.content.Intent;
-import android.os.Vibrator;
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -11,15 +9,21 @@ import android.view.MenuItem;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.facebook.FacebookSdk;
+import com.facebook.AccessToken;
+import com.facebook.GraphRequest;
+import com.facebook.GraphResponse;
 import com.facebook.appevents.AppEventsLogger;
+import com.parse.GetCallback;
 import com.parse.LogInCallback;
-import com.parse.Parse;
+import com.parse.ParseACL;
 import com.parse.ParseException;
 import com.parse.ParseFacebookUtils;
+import com.parse.ParseObject;
 import com.parse.ParseUser;
 
-import java.util.ArrayList;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -33,11 +37,6 @@ public class MainActivity extends ActionBarActivity {
         setContentView(R.layout.activity_main);
 
         setupView();
-
-        FacebookSdk.sdkInitialize(getApplicationContext());
-        Parse.enableLocalDatastore(this);
-        Parse.initialize(this);
-        ParseFacebookUtils.initialize(this);
 
         doFacebookLogin();
 
@@ -58,21 +57,17 @@ public class MainActivity extends ActionBarActivity {
             @Override
             public void done(ParseUser user, ParseException err) {
 
-                Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-                v.vibrate(1000);
                 if (user == null) {
-//                    Toast.makeText(mainActivity, "Uh oh. The user cancelled the Facebook login.", Toast.LENGTH_LONG).show();
                     tvStatus.setText("You cancelled the Facebook login. Let's try again one more time.");
                     Log.d("FacebookLogin", "Uh oh. The user cancelled the Facebook login.");
                     if (err != null) {
                         Log.d("FacebookLogin", err.toString());
                     }
-//                    doFacebookLogin();
                 } else if (user.isNew()) {
                     Toast.makeText(mainActivity, "You're logged in! Welcome! Please wait...", Toast.LENGTH_SHORT).show();
                     tvStatus.setText("");
                     Log.d("FacebookLogin", "User signed up and logged in through Facebook!" + user.getSessionToken());
-                    startMapActivity(user.getSessionToken());
+                    getFacebookId(user);
                 } else {
                     Toast.makeText(mainActivity, "You're in! Loading...", Toast.LENGTH_SHORT).show();
                     tvStatus.setText("");
@@ -84,6 +79,70 @@ public class MainActivity extends ActionBarActivity {
 
     }
 
+    private void createLocation(final ParseUser user, String facebookId, String facebookName) {
+
+        final ParseObject location = new ParseObject("Location");
+        location.put("track", true);
+        location.put("note", "");
+
+        location.put("fbId", facebookId);
+        location.put("fbName", facebookName);
+        location.put("userId", user);
+
+        ParseACL locationACL = new ParseACL(user);
+        locationACL.setPublicReadAccess(true);
+        location.setACL(locationACL);
+
+        try {
+            location.save();
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
+        location.fetchInBackground(new GetCallback<ParseObject>() {
+            @Override
+            public void done(ParseObject parseObject, ParseException e) {
+                String locationId = parseObject.getObjectId();
+
+                location.saveInBackground();
+
+                user.put("locationId", location);
+                user.saveInBackground();
+
+                startMapActivity(user.getSessionToken());
+            }
+        });
+
+
+
+    }
+
+    private void getFacebookId(final ParseUser user) {
+
+        GraphRequest request = GraphRequest.newMeRequest(
+                AccessToken.getCurrentAccessToken(),
+                new GraphRequest.GraphJSONObjectCallback() {
+                    @Override
+                    public void onCompleted(
+                            JSONObject object,
+                            GraphResponse response) {
+                        try {
+                            String facebookId = object.getString("id");
+                            String facebookName = object.getString("name");
+                            createLocation(user, facebookId, facebookName);
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                });
+
+        Bundle parameters = new Bundle();
+        parameters.putString("fields", "id,name");
+        request.setParameters(parameters);
+        request.executeAsync();
+    }
+
+
     private void startMapActivity(String sessionToken) {
         Log.d("startMapActivity", "start another activity");
         // Create an intent
@@ -91,6 +150,9 @@ public class MainActivity extends ActionBarActivity {
 
         // Pass sessionToken
         i.putExtra("session", sessionToken);
+
+        // Close this activity
+        finish();
 
         // Launch the new activity
         startActivity(i);

@@ -4,7 +4,6 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.location.Location;
-import android.os.Vibrator;
 import android.support.v4.app.FragmentActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -13,6 +12,7 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.CompoundButton;
 import android.widget.EditText;
+import android.widget.RelativeLayout;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -28,8 +28,9 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
-import com.parse.Parse;
 import com.parse.ParseException;
+import com.parse.ParseObject;
+import com.parse.ParseQuery;
 import com.parse.ParseUser;
 
 
@@ -40,17 +41,17 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     private GoogleApiClient mGoogleApiClient;
     private Marker now;
     private LatLng currentPoint;
+    private PendingIntent pendingIntent;
+    private LocationRequest mLocationRequest;
 
 
     private long UPDATE_INTERVAL = 30000;  /* 30 secs */
     private long FASTEST_INTERVAL = 5000; /* 5 secs */
-    private double defaultLat = 13.7515989;
-    private double defaultLng = 100.5352369;
     private Switch sLocation;
     private EditText etStatus;
-    private String status = "mock up status";
     private ParseUser user;
-    private boolean locationEnabled = true;
+    private ParseObject locationObj;
+    private RelativeLayout rlOverlay;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -58,34 +59,55 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         setContentView(R.layout.activity_maps);
         setupUser();
         setUpMapIfNeeded();
-        setupView();
-        setupListeners();
 
         mGoogleApiClient = new GoogleApiClient.Builder(this)
                 .addApi(LocationServices.API)
                 .addConnectionCallbacks(this)
                 .addOnConnectionFailedListener(this).build();
 
+
+        // Connect the client.
+        mGoogleApiClient.connect();
+
     }
 
     private void setupView() {
 
+        rlOverlay = (RelativeLayout) findViewById(R.id.rlOverlay);
+
         sLocation = (Switch) findViewById(R.id.sLocation);
+        Boolean switchedOn = fetchSwitch();
+        sLocation.setChecked(switchedOn);
+        setGPSService(switchedOn);
+
         etStatus = (EditText) findViewById(R.id.etStatus);
-        setSwitch(true);
         etStatus.setText(fetchStatus());
+
+        setupListeners();
 
     }
 
+    private void setGPSService(Boolean switchedOn) {
+        if(switchedOn){
+            LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient,
+                    mLocationRequest, pendingIntent);
+            rlOverlay.setVisibility(RelativeLayout.GONE);
+            Toast.makeText(MapsActivity.this, "Location tracking turned on", Toast.LENGTH_SHORT).show();
+        } else {
+            LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, pendingIntent);
+            rlOverlay.setVisibility(RelativeLayout.VISIBLE);
+            Toast.makeText(MapsActivity.this, "Location tracking turned off", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void setupListeners() {
-        final MapsActivity app = this;
         etStatus.setOnEditorActionListener(new TextView.OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
                 if (actionId == EditorInfo.IME_ACTION_DONE) {
                     InputMethodManager imm = (InputMethodManager)v.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
                     imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
-                    Toast.makeText(app, "Saving...", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MapsActivity.this, "Saving...", Toast.LENGTH_SHORT).show();
                     String newStatus = etStatus.getText().toString();
                     setStatus(newStatus);
                     return true;
@@ -97,16 +119,16 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         sLocation.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                Toast.makeText(app, "Saving...", Toast.LENGTH_SHORT).show();
+//                Toast.makeText(MapsActivity.this, "Saving...", Toast.LENGTH_SHORT).show();
                 setSwitch(isChecked);
             }
         });
     }
 
     private void setStatus(String status){
-        user.put("note", status);
+        locationObj.put("note", status);
         try {
-            user.save();
+            locationObj.save();
             Toast.makeText(MapsActivity.this, "Saved!", Toast.LENGTH_SHORT).show();
             Log.d("setStatus", "saved " + status);
         } catch (ParseException e) {
@@ -115,14 +137,10 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     }
 
     private void setSwitch(boolean on){
-        user.put("track", on);
+        locationObj.put("track", on);
         try {
-            user.save();
-            if(on){
-                Toast.makeText(MapsActivity.this, "Location tracking turned on", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(MapsActivity.this, "Location tracking turned off", Toast.LENGTH_SHORT).show();
-            }
+            locationObj.save();
+            setGPSService(on);
             Log.d("setSwitch", "saved");
         } catch (ParseException e) {
             e.printStackTrace();
@@ -206,13 +224,9 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
 
     protected void onStart() {
         super.onStart();
-        // Connect the client.
-        mGoogleApiClient.connect();
     }
 
     protected void onStop() {
-        // Disconnecting the client invalidates it.
-        mGoogleApiClient.disconnect();
         super.onStop();
     }
 
@@ -225,6 +239,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
             currentPoint = new LatLng(mCurrentLocation.getLatitude(), mCurrentLocation.getLongitude());
         }
         startLocationUpdates();
+        setupView();
 
 //        LocationRequest locationRequest = LocationRequest.create()
 //                .setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY)
@@ -235,7 +250,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     }
 
     private void startLocationUpdates() {
-        LocationRequest mLocationRequest = new LocationRequest();
+        mLocationRequest = new LocationRequest();
         mLocationRequest.setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY);
         mLocationRequest.setInterval(UPDATE_INTERVAL);
         mLocationRequest.setFastestInterval(FASTEST_INTERVAL);
@@ -245,11 +260,10 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
                 mLocationRequest, this);
 
         // Update in background
-        PendingIntent pendingIntent = PendingIntent.getService(this, 0,
+        pendingIntent = PendingIntent.getService(this, 0,
                 new Intent(this, LocationIntentService.class),
                 PendingIntent.FLAG_UPDATE_CURRENT);
-        LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient,
-                mLocationRequest, pendingIntent);
+
     }
 
     // GoogleApiClient.ConnectionCallbacks
@@ -269,6 +283,17 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
     }
 
     @Override
+    protected void onDestroy() {
+        Log.d("onDestroy", "Destroy called");
+        setSwitch(false);
+
+        // Disconnecting the client invalidates it.
+        mGoogleApiClient.disconnect();
+
+        super.onDestroy();
+    }
+
+    @Override
     public void onLocationChanged(Location location) {
         // Report to the UI that the location was updated
         String msg = "Updated Location: " +
@@ -278,17 +303,21 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         currentPoint = new LatLng(location.getLatitude(), location.getLongitude());
         updateMarker();
         Log.d("Updated: ", msg);
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+//        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
 
-        Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-        v.vibrate(300);
     }
 
 
-    public void setupUser() {
+    private void setupUser() {
+
         String session = getIntent().getStringExtra("session");
+
         try {
+
             user = ParseUser.become(session);
+            locationObj = user.getParseObject("locationId");
+            locationObj.fetch();
+
         } catch (ParseException e) {
             e.printStackTrace();
         }
@@ -297,7 +326,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
 
     private String fetchStatus() {
 
-        String status = user.getString("note");
+        String status = locationObj.getString("note");
 
         if (status != null) {
             return status;
@@ -307,4 +336,16 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
 
     }
 
+    private Boolean fetchSwitch() {
+
+        Boolean switchedOn = locationObj.getBoolean("track");
+
+        if (switchedOn != null) {
+            return switchedOn;
+        } else {
+            setSwitch(true);
+            return true;
+        }
+
+    }
 }
